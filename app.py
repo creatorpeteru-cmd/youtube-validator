@@ -237,7 +237,9 @@ def analyze_keyword(keyword):
         progress_bar.progress(15)
         
         # 3개월 데이터 전부 가져오기
-        three_months_ago = (datetime.now() - timedelta(days=90)).isoformat() + 'Z'
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc)
+        three_months_ago = (now_utc - timedelta(days=90)).isoformat()
         
         search_request = youtube.search().list(
             q=keyword,
@@ -274,9 +276,10 @@ def analyze_keyword(keyword):
         status_text.text("📈 기간별 분석 중...")
         progress_bar.progress(45)
         
-        now = datetime.now()
-        one_week_ago = now - timedelta(days=7)
-        one_month_ago = now - timedelta(days=30)
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc)
+        one_week_ago = now_utc - timedelta(days=7)
+        one_month_ago = now_utc - timedelta(days=30)
         
         videos_last_week = []
         videos_last_month = []
