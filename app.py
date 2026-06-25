@@ -92,7 +92,7 @@ def analyze_comments(youtube, video_ids, progress_bar):
     
     try:
         for i, video_id in enumerate(video_ids):
-            progress = 60 + (i / len(video_ids)) * 30
+            progress = 60 + (i / max(len(video_ids), 1)) * 30
             progress_bar.progress(int(progress))
             
             try:
@@ -140,7 +140,6 @@ def analyze_comments(youtube, video_ids, progress_bar):
                 # 감정 분석
                 sentiment = analyze_sentiment(text)
                 comment['sentiment'] = sentiment
-                comment['language'] = lang if 'lang' in locals() else '기타'
                 
                 if sentiment == "긍정":
                     comments_data['sentiments']['긍정'] += 1
@@ -175,6 +174,56 @@ def analyze_comments(youtube, video_ids, progress_bar):
     
     return comments_data
 
+def get_period_stats(videos, period_name):
+    """기간별 통계 계산"""
+    if not videos:
+        return None
+    
+    view_counts = []
+    for video in videos:
+        try:
+            views = int(video['statistics'].get('viewCount', 0))
+            view_counts.append(views)
+        except:
+            continue
+    
+    if not view_counts:
+        return None
+    
+    avg_views = statistics.mean(view_counts)
+    median_views = statistics.median(view_counts)
+    max_views = max(view_counts)
+    min_views = min(view_counts)
+    
+    return {
+        'period': period_name,
+        'count': len(videos),
+        'avg_views': avg_views,
+        'median_views': median_views,
+        'max_views': max_views,
+        'min_views': min_views
+    }
+
+def display_period_stats(stats):
+    """기간별 통계 표시"""
+    if stats is None:
+        st.info("해당 기간의 영상이 없습니다.")
+        return
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("업로드 영상", f"{stats['count']}개")
+    
+    with col2:
+        st.metric("평균 조회수", f"{int(stats['avg_views']):,}회")
+    
+    with col3:
+        st.metric("중앙값 조회수", f"{int(stats['median_views']):,}회")
+    
+    with col4:
+        st.metric("최고 조회수", f"{int(stats['max_views']):,}회")
+
 def analyze_keyword(keyword):
     """키워드 분석"""
     try:
@@ -187,13 +236,14 @@ def analyze_keyword(keyword):
         status_text.text("📡 YouTube에서 검색 중...")
         progress_bar.progress(15)
         
+        # 3개월 데이터 전부 가져오기
         three_months_ago = (datetime.now() - timedelta(days=90)).isoformat() + 'Z'
         
         search_request = youtube.search().list(
             q=keyword,
             part='snippet',
             type='video',
-            order='viewCount',
+            order='date',  # 최신순으로 정렬
             maxResults=50,
             publishedAfter=three_months_ago,
             relevanceLanguage='ko'
@@ -220,42 +270,37 @@ def analyze_keyword(keyword):
         videos_response = videos_request.execute()
         videos = videos_response['items']
         
-        # 3️⃣ 데이터 분석
-        status_text.text("📈 데이터 분석 중...")
+        # 3️⃣ 기간별 분류
+        status_text.text("📈 기간별 분석 중...")
         progress_bar.progress(45)
         
-        view_counts = []
-        publish_dates = []
-        
-        for video in videos:
-            try:
-                views = int(video['statistics'].get('viewCount', 0))
-                view_counts.append(views)
-                publish_date = datetime.fromisoformat(
-                    video['snippet']['publishedAt'].replace('Z', '+00:00')
-                )
-                publish_dates.append(publish_date)
-            except:
-                continue
-        
-        if not view_counts:
-            st.error("❌ 통계 데이터를 가져올 수 없습니다.")
-            return
-        
-        # 통계 계산
-        total_videos = search_response['pageInfo'].get('totalResults', 0)
-        avg_views = statistics.mean(view_counts)
-        median_views = statistics.median(view_counts)
-        max_views = max(view_counts)
-        min_views = min(view_counts)
-        
-        # 최근 업로드 수
-        now = datetime.now(publish_dates[0].tzinfo)
+        now = datetime.now()
         one_week_ago = now - timedelta(days=7)
         one_month_ago = now - timedelta(days=30)
         
-        last_week_videos = sum(1 for d in publish_dates if d > one_week_ago)
-        last_month_videos = sum(1 for d in publish_dates if d > one_month_ago)
+        videos_last_week = []
+        videos_last_month = []
+        videos_all = []
+        
+        for video in videos:
+            try:
+                publish_date_str = video['snippet']['publishedAt']
+                publish_date = datetime.fromisoformat(
+                    publish_date_str.replace('Z', '+00:00')
+                )
+                
+                videos_all.append(video)
+                
+                if publish_date > one_week_ago:
+                    videos_last_week.append(video)
+                
+                if publish_date > one_month_ago:
+                    videos_last_month.append(video)
+            except:
+                continue
+        
+        # 통계 계산
+        total_videos = search_response['pageInfo'].get('totalResults', 0)
         
         # 경쟁도 판정
         if total_videos > 100000:
@@ -271,20 +316,10 @@ def analyze_keyword(keyword):
             competition = "낮음"
             competition_color = "🟢"
         
-        # 추세 판정
-        recent_views = view_counts[:len(view_counts)//3] if len(view_counts) > 2 else view_counts
-        older_views = view_counts[2*len(view_counts)//3:] if len(view_counts) > 2 else view_counts
-        
-        recent_avg = statistics.mean(recent_views) if recent_views else 0
-        older_avg = statistics.mean(older_views) if older_views else 0
-        
-        trending_up = recent_avg > older_avg
-        trend = "📈 상승중" if trending_up else "📉 하락중"
-        
         progress_bar.progress(60)
         status_text.text("💬 댓글 분석 중...")
         
-        # 4️⃣ 댓글 분석
+        # 4️⃣ 댓글 분석 (상위 5개 영상)
         comments_data = analyze_comments(youtube, video_ids[:5], progress_bar)
         
         progress_bar.progress(100)
@@ -296,8 +331,24 @@ def analyze_keyword(keyword):
         # 5️⃣ 결과 표시
         st.success(f"✅ '{keyword}' 분석 완료!")
         
-        # 주요 지표
-        st.markdown("### 📊 주요 지표")
+        st.divider()
+        
+        # 📊 1주일 분석
+        st.markdown("### 📊 최근 1주일 영상 분석")
+        stats_week = get_period_stats(videos_last_week, "1주일")
+        display_period_stats(stats_week)
+        
+        st.divider()
+        
+        # 📊 1개월 분석
+        st.markdown("### 📊 최근 1개월 영상 분석")
+        stats_month = get_period_stats(videos_last_month, "1개월")
+        display_period_stats(stats_month)
+        
+        st.divider()
+        
+        # 📊 전체 분석
+        st.markdown("### 📊 전체 분석 (최근 3개월)")
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -310,43 +361,27 @@ def analyze_keyword(keyword):
         
         with col2:
             st.metric(
-                "1주일 업로드",
-                f"{last_week_videos}개",
-                f"일당 {last_week_videos/7:.1f}개"
+                "분석된 영상",
+                f"{len(videos)}개"
             )
         
         with col3:
-            st.metric(
-                "1개월 업로드",
-                f"{last_month_videos}개",
-                f"일당 {last_month_videos/30:.1f}개"
-            )
+            view_counts = []
+            for video in videos:
+                try:
+                    views = int(video['statistics'].get('viewCount', 0))
+                    view_counts.append(views)
+                except:
+                    continue
+            
+            if view_counts:
+                avg_views = statistics.mean(view_counts)
+                st.metric("평균 조회수", f"{int(avg_views):,}회")
         
         with col4:
-            st.metric(
-                "현재 추세",
-                trend,
-                f"분석: {len(videos)}개 영상"
-            )
-        
-        st.divider()
-        
-        # 조회수 통계
-        st.markdown("### 📈 조회수 통계")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("평균 조회수", f"{int(avg_views):,}회")
-        
-        with col2:
-            st.metric("중앙값 조회수", f"{int(median_views):,}회")
-        
-        with col3:
-            st.metric("최고 조회수", f"{int(max_views):,}회")
-        
-        with col4:
-            st.metric("최저 조회수", f"{int(min_views):,}회")
+            if view_counts:
+                max_views = max(view_counts)
+                st.metric("최고 조회수", f"{int(max_views):,}회")
         
         st.divider()
         
@@ -409,8 +444,8 @@ def analyze_keyword(keyword):
 이 주제는 현재 **{total_videos:,}개**의 경쟁 영상이 있으며,
 경쟁도는 **{competition}**입니다.
 
-최근 1주일간 **{last_week_videos}개**의 새로운 영상이
-업로드되고 있으며, 현재 추세는 **{trend}**중입니다.
+- **최근 1주일:** {len(videos_last_week)}개 영상 업로드
+- **최근 1개월:** {len(videos_last_month)}개 영상 업로드
 """
         
         st.info(verdict_text)
@@ -427,12 +462,7 @@ def analyze_keyword(keyword):
         else:
             recommendations.append("⚠️ **경쟁이 많은 주제**입니다. 강력한 차별화 전략이 필요합니다.")
         
-        if trending_up:
-            recommendations.append("📈 **상승 추세**이므로 좋은 시기입니다!")
-        else:
-            recommendations.append("📉 **하락 추세**입니다. 새로운 각도를 고려하세요.")
-        
-        if last_week_videos > 20:
+        if len(videos_last_week) > 20:
             recommendations.append("🔥 **주간 업로드가 많습니다.** 빠른 실행이 중요합니다!")
         else:
             recommendations.append("✨ **주간 업로드가 적당합니다.** 기회가 있습니다!")
@@ -441,37 +471,31 @@ def analyze_keyword(keyword):
             if comments_data['positive_pct'] > 60:
                 recommendations.append("😊 **댓글 반응이 긍정적입니다!** 관객 만족도가 높습니다.")
             elif comments_data['negative_pct'] > 40:
-                recommendations.append("⚠️ **부정적 댓글이 많습니다.** 콘텐츠 개선 필요할 수 있습니다.")
+                recommendations.append("⚠️ **부정적 댓글이 많습니다.** 콘텐츠 개선이 필요할 수 있습니다.")
         
         for rec in recommendations:
             st.write(rec)
         
         st.divider()
         
-        # 상세 정보
-        with st.expander("📋 상세 정보"):
-            st.write(f"""
-            **영상 통계:**
-            - 총 경쟁 영상: {total_videos:,}개
-            - 분석된 영상: {len(videos)}개
-            - 평균 조회수: {int(avg_views):,}회
-            - 중앙값 조회수: {int(median_views):,}회
-            - 최고 조회수: {int(max_views):,}회
-            - 최저 조회수: {int(min_views):,}회
-            - 1주일 업로드: {last_week_videos}개
-            - 1개월 업로드: {last_month_videos}개
-            - 현재 추세: {trend}
-            """)
-            if comments_data['total_comments'] > 0:
-                st.write(f"""
-            **댓글 통계:**
-            - 총 댓글 수: {comments_data['total_comments']:,}개
-            - 평균 댓글/영상: {comments_data['avg_per_video']:.0f}개
-            - 주요 언어: {comments_data['main_language']}
-            - 긍정 비율: {comments_data['positive_pct']:.1f}%
-            - 중립 비율: {comments_data['neutral_pct']:.1f}%
-            - 부정 비율: {comments_data['negative_pct']:.1f}%
-            """)
+        # 상세 비교
+        with st.expander("📋 1주일 vs 1개월 vs 전체 비교"):
+            comparison_data = {
+                '1주일': stats_week,
+                '1개월': stats_month,
+                '전체': get_period_stats(videos, "전체")
+            }
+            
+            for period_name, period_stats in comparison_data.items():
+                if period_stats:
+                    st.write(f"""
+**{period_name}:**
+- 영상 수: {period_stats['count']}개
+- 평균 조회수: {int(period_stats['avg_views']):,}회
+- 중앙값 조회수: {int(period_stats['median_views']):,}회
+- 최고 조회수: {int(period_stats['max_views']):,}회
+- 최저 조회수: {int(period_stats['min_views']):,}회
+""")
         
     except Exception as e:
         st.error(f"❌ 오류 발생: {str(e)}")
@@ -489,7 +513,7 @@ st.divider()
 st.markdown("""
 ---
 ### 📱 사용 팁
-- 여러 주제를 계속 분석할 수 있습니다
+- 1주일/1개월/전체 데이터를 따로 분석합니다
 - 댓글 감정 분석으로 시청자 반응 확인
 - 모든 데이터는 실시간으로 가져옵니다
 
