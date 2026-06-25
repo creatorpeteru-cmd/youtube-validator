@@ -481,6 +481,142 @@ def analyze_keyword(keyword):
         
         st.divider()
         
+        # 🏆 트렌드 랭킹
+        st.markdown("### 🏆 트렌드 랭킹")
+        
+        # 조회수 기준 정렬
+        videos_by_views = sorted(videos, key=lambda x: int(x['statistics'].get('viewCount', 0)), reverse=True)
+        
+        # 댓글 수 기준 정렬
+        videos_by_comments = sorted(videos, key=lambda x: int(x['statistics'].get('commentCount', 0)), reverse=True)
+        
+        # 인기도 지수 (조회수 + 댓글 수 + 좋아요 조합)
+        def calculate_popularity(video):
+            views = int(video['statistics'].get('viewCount', 0))
+            comments = int(video['statistics'].get('commentCount', 0))
+            likes = int(video['statistics'].get('likeCount', 0))
+            
+            # 정규화된 인기도 지수
+            return (views * 0.6) + (comments * 100 * 0.3) + (likes * 50 * 0.1)
+        
+        videos_by_popularity = sorted(videos, key=calculate_popularity, reverse=True)
+        
+        # 탭으로 표시
+        tab1, tab2, tab3 = st.tabs(["📺 조회수 TOP 5", "💬 댓글 TOP 5", "⭐ 인기도 지수 TOP 5"])
+        
+        with tab1:
+            for i, video in enumerate(videos_by_views[:5], 1):
+                try:
+                    title = video['snippet']['title']
+                    views = int(video['statistics'].get('viewCount', 0))
+                    channel = video['snippet']['channelTitle']
+                    st.write(f"{i}. **{title}**")
+                    st.write(f"   - 채널: {channel}")
+                    st.write(f"   - 조회수: {views:,}회")
+                    st.divider()
+                except:
+                    continue
+        
+        with tab2:
+            for i, video in enumerate(videos_by_comments[:5], 1):
+                try:
+                    title = video['snippet']['title']
+                    comments = int(video['statistics'].get('commentCount', 0))
+                    channel = video['snippet']['channelTitle']
+                    st.write(f"{i}. **{title}**")
+                    st.write(f"   - 채널: {channel}")
+                    st.write(f"   - 댓글: {comments:,}개")
+                    st.divider()
+                except:
+                    continue
+        
+        with tab3:
+            for i, video in enumerate(videos_by_popularity[:5], 1):
+                try:
+                    title = video['snippet']['title']
+                    channel = video['snippet']['channelTitle']
+                    views = int(video['statistics'].get('viewCount', 0))
+                    comments = int(video['statistics'].get('commentCount', 0))
+                    popularity = calculate_popularity(video)
+                    st.write(f"{i}. **{title}**")
+                    st.write(f"   - 채널: {channel}")
+                    st.write(f"   - 조회수: {views:,}회 | 댓글: {comments:,}개")
+                    st.write(f"   - 인기도 지수: {popularity:,.0f}")
+                    st.divider()
+                except:
+                    continue
+        
+        st.divider()
+        
+        # 📺 상위 채널 분석
+        st.markdown("### 📺 상위 채널 TOP 3 (최근 1주일)")
+        
+        # 채널별 영상 분류
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc)
+        one_week_ago_utc = now_utc - timedelta(days=7)
+        
+        channel_stats = {}
+        
+        for video in videos:
+            try:
+                channel_name = video['snippet']['channelTitle']
+                publish_date_str = video['snippet']['publishedAt']
+                publish_date = datetime.fromisoformat(
+                    publish_date_str.replace('Z', '+00:00')
+                )
+                
+                views = int(video['statistics'].get('viewCount', 0))
+                comments = int(video['statistics'].get('commentCount', 0))
+                
+                if publish_date > one_week_ago_utc:
+                    if channel_name not in channel_stats:
+                        channel_stats[channel_name] = {
+                            'upload_count': 0,
+                            'total_views': 0,
+                            'total_comments': 0,
+                            'videos': []
+                        }
+                    
+                    channel_stats[channel_name]['upload_count'] += 1
+                    channel_stats[channel_name]['total_views'] += views
+                    channel_stats[channel_name]['total_comments'] += comments
+                    channel_stats[channel_name]['videos'].append(video)
+            except:
+                continue
+        
+        # 상위 3개 채널 (업로드 수 기준)
+        top_channels = sorted(channel_stats.items(), key=lambda x: x[1]['upload_count'], reverse=True)[:3]
+        
+        if top_channels:
+            for rank, (channel_name, stats) in enumerate(top_channels, 1):
+                with st.expander(f"{rank}. {channel_name}", expanded=(rank==1)):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("최근 1주일 업로드", f"{stats['upload_count']}개")
+                    
+                    with col2:
+                        avg_views = stats['total_views'] / stats['upload_count'] if stats['upload_count'] > 0 else 0
+                        st.metric("평균 조회수", f"{int(avg_views):,}회")
+                    
+                    with col3:
+                        avg_comments = stats['total_comments'] / stats['upload_count'] if stats['upload_count'] > 0 else 0
+                        st.metric("평균 댓글", f"{int(avg_comments)}개")
+                    
+                    st.write(f"**최근 업로드 영상:**")
+                    for video in stats['videos'][:3]:
+                        try:
+                            title = video['snippet']['title']
+                            views = int(video['statistics'].get('viewCount', 0))
+                            st.write(f"- {title[:50]}... ({views:,}회)")
+                        except:
+                            continue
+        else:
+            st.info("최근 1주일 내 업로드된 영상이 없습니다.")
+        
+        st.divider()
+        
         # 상세 비교
         with st.expander("📋 1주일 vs 1개월 vs 전체 비교"):
             comparison_data = {
